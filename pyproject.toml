@@ -1,0 +1,11 @@
+[project]
+name = "repository-release-readiness-scorecard"
+version = "0.1.0"
+description = "Score whether an open-source repository is ready for a trustworthy public launch."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "maxi-maxima"}]
+
+[project.scripts]
+repository-release-readiness-scorecard = "repository_release_readiness_scorecard.__main__:main"

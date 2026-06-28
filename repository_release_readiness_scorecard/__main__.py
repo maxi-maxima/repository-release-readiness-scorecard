@@ -1,0 +1,35 @@
+import argparse, json
+from pathlib import Path
+
+CHECKS = [("README.md", 20), ("LICENSE", 15), (".gitignore", 10), ("examples", 15), ("tests", 20), ("README.zh-CN.md", 10), ("pyproject.toml", 10)]
+
+def score(root):
+    root = Path(root)
+    checks = []
+    total = 0
+    for name, points in CHECKS:
+        exists = (root / name).exists()
+        if name == "README.md" and exists:
+            exists = len((root / name).read_text(encoding="utf-8", errors="ignore")) > 500
+        checks.append({"check": name, "points": points if exists else 0, "max_points": points, "passed": exists})
+        total += points if exists else 0
+    grade = "ready" if total >= 80 else "needs-work" if total >= 50 else "not-ready"
+    return {"score": total, "grade": grade, "checks": checks}
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Score repository release readiness")
+    parser.add_argument("path", nargs="?", default=".")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    result = score(args.path)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Score: {result['score']}/100 ({result['grade']})")
+        for check in result["checks"]:
+            mark = "✓" if check["passed"] else "✗"
+            print(f"{mark} {check['check']} {check['points']}/{check['max_points']}")
+    return 0 if result["score"] >= 80 else 2
+
+if __name__ == "__main__":
+    raise SystemExit(main())
