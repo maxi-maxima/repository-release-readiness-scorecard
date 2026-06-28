@@ -1,17 +1,31 @@
 import argparse, json
 from pathlib import Path
 
-CHECKS = [("README.md", 20), ("LICENSE", 15), (".gitignore", 10), ("examples", 15), ("tests", 20), ("README.zh-CN.md", 10), ("pyproject.toml", 10)]
+CHECKS = [
+    ("README.md", 20, "Write a README over 500 characters with install, usage, and examples."),
+    ("LICENSE", 15, "Add a LICENSE file so users know how they can reuse the project."),
+    (".gitignore", 10, "Add a .gitignore to keep local artifacts out of releases."),
+    ("examples", 15, "Include an examples/ directory with runnable sample input or output."),
+    ("tests", 20, "Add a tests/ directory with automated checks for the public behavior."),
+    ("README.zh-CN.md", 10, "Add README.zh-CN.md to make the project accessible to Chinese readers."),
+    ("pyproject.toml", 10, "Add pyproject.toml with package metadata and build configuration."),
+]
 
 def score(root):
     root = Path(root)
     checks = []
     total = 0
-    for name, points in CHECKS:
+    for name, points, recommendation in CHECKS:
         exists = (root / name).exists()
         if name == "README.md" and exists:
             exists = len((root / name).read_text(encoding="utf-8", errors="ignore")) > 500
-        checks.append({"check": name, "points": points if exists else 0, "max_points": points, "passed": exists})
+        checks.append({
+            "check": name,
+            "points": points if exists else 0,
+            "max_points": points,
+            "passed": exists,
+            "recommendation": "" if exists else recommendation,
+        })
         total += points if exists else 0
     grade = "ready" if total >= 80 else "needs-work" if total >= 50 else "not-ready"
     return {"score": total, "grade": grade, "checks": checks}
