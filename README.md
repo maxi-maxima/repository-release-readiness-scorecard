@@ -24,7 +24,10 @@ No runtime dependencies are required beyond Python's standard library.
 
 ```bash
 python -m repository_release_readiness_scorecard examples/sample-repo
+python -m repository_release_readiness_scorecard . --min-score 70
 ```
+
+`--min-score` lets CI choose its own release gate. The default remains `80`, while lower values are useful for advisory reports during early project setup.
 
 ## Example Output
 

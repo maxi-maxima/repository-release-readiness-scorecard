@@ -31,5 +31,20 @@ class CliExampleTest(unittest.TestCase):
         self.assertIn("README over 500 characters", readme_check["recommendation"])
         self.assertIn("LICENSE file", license_check["recommendation"])
 
+    def test_min_score_can_relax_ci_gate(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "README.md").write_text("short", encoding="utf-8")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--min-score', '0'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("Score: 0/100", proc.stdout)
+
+    def test_min_score_rejects_out_of_range_values(self):
+        proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', 'examples/sample-repo', '--min-score', '101'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--min-score must be between 0 and 100", proc.stderr)
+
 if __name__ == "__main__":
     unittest.main()

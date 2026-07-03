@@ -24,7 +24,10 @@ pip install -e .
 
 ```bash
 python -m repository_release_readiness_scorecard examples/sample-repo
+python -m repository_release_readiness_scorecard . --min-score 70
 ```
+
+`--min-score` 可让 CI 自定义通过阈值。默认仍为 `80`，早期项目也可以调低阈值用于提示型报告。
 
 ## 示例
 

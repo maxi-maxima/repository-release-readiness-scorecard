@@ -34,7 +34,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Score repository release readiness")
     parser.add_argument("path", nargs="?", default=".")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--min-score", type=int, default=80, help="Minimum score required for a zero exit status")
     args = parser.parse_args(argv)
+    if not 0 <= args.min_score <= 100:
+        parser.error("--min-score must be between 0 and 100")
     result = score(args.path)
     if args.json:
         print(json.dumps(result, indent=2))
@@ -43,7 +46,7 @@ def main(argv=None):
         for check in result["checks"]:
             mark = "✓" if check["passed"] else "✗"
             print(f"{mark} {check['check']} {check['points']}/{check['max_points']}")
-    return 0 if result["score"] >= 80 else 2
+    return 0 if result["score"] >= args.min_score else 2
 
 if __name__ == "__main__":
     raise SystemExit(main())
