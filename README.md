@@ -27,12 +27,14 @@ python -m repository_release_readiness_scorecard examples/sample-repo
 python -m repository_release_readiness_scorecard . --min-score 70
 python -m repository_release_readiness_scorecard . --min-score 70 --require-check LICENSE --require-check tests
 python -m repository_release_readiness_scorecard . --markdown
+python -m repository_release_readiness_scorecard . --markdown --output readiness-report.md
 ```
 
 `--min-score` lets CI choose its own release gate. The default remains `80`, while lower values are useful for advisory reports during early project setup. `--require-check` can additionally make specific release hygiene checks mandatory even when the aggregate score is acceptable.
 
 Use `--markdown` when you want a PR-ready table for issue comments, release
-reviews, or CI summary uploads.
+reviews, or CI summary uploads. Add `--output <path>` to persist the exact same
+rendered report as a CI artifact while still printing it to stdout.
 
 ## Example Output
 

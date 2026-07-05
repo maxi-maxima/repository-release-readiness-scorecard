@@ -47,12 +47,26 @@ def format_markdown(result):
         lines.extend(["", f"Required checks failed: {', '.join(result['failed_required_checks'])}"])
     return "\n".join(lines)
 
+def render_output(result, *, as_json=False, as_markdown=False):
+    if as_json:
+        return json.dumps(result, indent=2)
+    if as_markdown:
+        return format_markdown(result)
+    lines = [f"Score: {result['score']}/100 ({result['grade']})"]
+    for check in result["checks"]:
+        mark = "✓" if check["passed"] else "✗"
+        lines.append(f"{mark} {check['check']} {check['points']}/{check['max_points']}")
+    if result["failed_required_checks"]:
+        lines.append(f"Required checks failed: {', '.join(result['failed_required_checks'])}")
+    return "\n".join(lines)
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Score repository release readiness")
     parser.add_argument("path", nargs="?", default=".")
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument("--json", action="store_true")
     output_group.add_argument("--markdown", action="store_true", help="Print a Markdown summary suitable for PR comments or issue reports")
+    parser.add_argument("--output", help="Write the rendered report to this file as well as stdout")
     parser.add_argument("--min-score", type=int, default=80, help="Minimum score required for a zero exit status")
     parser.add_argument("--require-check", action="append", default=[], choices=CHECK_NAMES, help="Require a specific check to pass even when the total score meets --min-score; may be used multiple times")
     args = parser.parse_args(argv)
@@ -62,17 +76,10 @@ def main(argv=None):
     failed_required = [check["check"] for check in result["checks"] if check["check"] in args.require_check and not check["passed"]]
     result["required_checks"] = args.require_check
     result["failed_required_checks"] = failed_required
-    if args.json:
-        print(json.dumps(result, indent=2))
-    elif args.markdown:
-        print(format_markdown(result))
-    else:
-        print(f"Score: {result['score']}/100 ({result['grade']})")
-        for check in result["checks"]:
-            mark = "✓" if check["passed"] else "✗"
-            print(f"{mark} {check['check']} {check['points']}/{check['max_points']}")
-        if failed_required:
-            print(f"Required checks failed: {', '.join(failed_required)}")
+    output = render_output(result, as_json=args.json, as_markdown=args.markdown)
+    print(output)
+    if args.output:
+        Path(args.output).write_text(output + "\n", encoding="utf-8")
     if failed_required:
         return 3
     return 0 if result["score"] >= args.min_score else 2

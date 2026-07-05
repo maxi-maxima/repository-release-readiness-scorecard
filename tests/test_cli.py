@@ -74,5 +74,15 @@ class CliExampleTest(unittest.TestCase):
         self.assertIn("| Check | Result | Points | Recommendation |", proc.stdout)
         self.assertIn("| README.md | pass | 20/20 |  |", proc.stdout)
 
+    def test_output_writes_selected_report_to_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir, "readiness.md")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', 'examples/sample-repo', '--markdown', '--output', str(output_path)], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+            self.assertEqual(proc.stderr, "")
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), proc.stdout)
+            self.assertIn("## Release Readiness Score", output_path.read_text(encoding="utf-8"))
+
 if __name__ == "__main__":
     unittest.main()
