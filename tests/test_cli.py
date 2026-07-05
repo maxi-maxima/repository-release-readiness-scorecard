@@ -64,5 +64,15 @@ class CliExampleTest(unittest.TestCase):
         self.assertEqual(payload["required_checks"], ["LICENSE"])
         self.assertEqual(payload["failed_required_checks"], [])
 
+    def test_markdown_output_is_pr_ready(self):
+        proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', 'examples/sample-repo', '--markdown'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("## Release Readiness Score", proc.stdout)
+        self.assertIn("**Score:** 100/100 (ready)", proc.stdout)
+        self.assertIn("| Check | Result | Points | Recommendation |", proc.stdout)
+        self.assertIn("| README.md | pass | 20/20 |  |", proc.stdout)
+
 if __name__ == "__main__":
     unittest.main()
