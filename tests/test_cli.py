@@ -84,5 +84,45 @@ class CliExampleTest(unittest.TestCase):
             self.assertEqual(output_path.read_text(encoding="utf-8"), proc.stdout)
             self.assertIn("## Release Readiness Score", output_path.read_text(encoding="utf-8"))
 
+    def test_artifact_check_reports_unignored_cache_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "README.md").write_text("x" * 600, encoding="utf-8")
+            cache_dir = Path(temp_dir, "__pycache__")
+            cache_dir.mkdir()
+            Path(cache_dir, "mod.cpython-311.pyc").write_bytes(b"cache")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--artifact-check', '--json', '--min-score', '0'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 0)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["artifact_check_passed"])
+        self.assertEqual(payload["artifact_findings"], ["__pycache__/mod.cpython-311.pyc"])
+
+    def test_fail_on_artifacts_returns_dedicated_status(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "README.md").write_text("x" * 600, encoding="utf-8")
+            Path(temp_dir, "debug.log").write_text("debug", encoding="utf-8")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--fail-on-artifacts', '--min-score', '0'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 4)
+        self.assertIn("✗ generated artifacts 1 finding(s)", proc.stdout)
+
+    def test_artifact_check_respects_gitignore_patterns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "README.md").write_text("x" * 600, encoding="utf-8")
+            Path(temp_dir, ".gitignore").write_text("*.log\n__pycache__/\n", encoding="utf-8")
+            cache_dir = Path(temp_dir, "__pycache__")
+            cache_dir.mkdir()
+            Path(cache_dir, "mod.cpython-311.pyc").write_bytes(b"cache")
+            Path(temp_dir, "debug.log").write_text("debug", encoding="utf-8")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--artifact-check', '--json', '--min-score', '0'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 0)
+        payload = json.loads(proc.stdout)
+        self.assertTrue(payload["artifact_check_passed"])
+        self.assertEqual(payload["artifact_findings"], [])
+
 if __name__ == "__main__":
     unittest.main()

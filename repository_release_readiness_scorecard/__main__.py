@@ -1,4 +1,4 @@
-import argparse, json
+import argparse, fnmatch, json
 from pathlib import Path
 
 CHECKS = [
@@ -12,7 +12,47 @@ CHECKS = [
 ]
 CHECK_NAMES = [name for name, _, _ in CHECKS]
 
-def score(root):
+def load_ignore_patterns(root):
+    gitignore = Path(root) / ".gitignore"
+    if not gitignore.exists():
+        return []
+    patterns = []
+    for line in gitignore.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and not line.startswith("!"):
+            patterns.append(line.rstrip("/"))
+    return patterns
+
+def is_ignored(relative_path, patterns):
+    normalized = relative_path.as_posix()
+    parts = relative_path.parts
+    for pattern in patterns:
+        cleaned = pattern.lstrip("/")
+        if fnmatch.fnmatch(normalized, cleaned) or fnmatch.fnmatch(relative_path.name, cleaned):
+            return True
+        if cleaned in parts:
+            return True
+    return False
+
+def inventory_untracked_artifacts(root):
+    root = Path(root)
+    patterns = load_ignore_patterns(root)
+    findings = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if ".git" in rel.parts:
+            continue
+        if is_ignored(rel, patterns):
+            continue
+        if any(part in {"__pycache__", ".pytest_cache", "node_modules", "dist", "build"} for part in rel.parts):
+            findings.append(rel.as_posix())
+        elif path.suffix in {".pyc", ".pyo", ".log", ".tmp", ".bak"}:
+            findings.append(rel.as_posix())
+    return findings
+
+def score(root, *, include_artifact_check=False):
     root = Path(root)
     checks = []
     total = 0
@@ -29,7 +69,12 @@ def score(root):
         })
         total += points if exists else 0
     grade = "ready" if total >= 80 else "needs-work" if total >= 50 else "not-ready"
-    return {"score": total, "grade": grade, "checks": checks}
+    result = {"score": total, "grade": grade, "checks": checks}
+    if include_artifact_check:
+        artifacts = inventory_untracked_artifacts(root)
+        result["artifact_findings"] = artifacts
+        result["artifact_check_passed"] = not artifacts
+    return result
 
 def format_markdown(result):
     lines = [
@@ -43,6 +88,10 @@ def format_markdown(result):
     for check in result["checks"]:
         result_text = "pass" if check["passed"] else "fail"
         lines.append(f"| {check['check']} | {result_text} | {check['points']}/{check['max_points']} | {check['recommendation']} |")
+    if "artifact_findings" in result:
+        artifact_result = "pass" if result["artifact_check_passed"] else "fail"
+        recommendation = "" if result["artifact_check_passed"] else "Ignore or remove generated artifacts before release."
+        lines.append(f"| generated artifacts | {artifact_result} | 0/0 | {recommendation} |")
     if result["failed_required_checks"]:
         lines.extend(["", f"Required checks failed: {', '.join(result['failed_required_checks'])}"])
     return "\n".join(lines)
@@ -56,6 +105,11 @@ def render_output(result, *, as_json=False, as_markdown=False):
     for check in result["checks"]:
         mark = "✓" if check["passed"] else "✗"
         lines.append(f"{mark} {check['check']} {check['points']}/{check['max_points']}")
+    if "artifact_findings" in result:
+        mark = "✓" if result["artifact_check_passed"] else "✗"
+        lines.append(f"{mark} generated artifacts {len(result['artifact_findings'])} finding(s)")
+        for artifact in result["artifact_findings"][:5]:
+            lines.append(f"  - {artifact}")
     if result["failed_required_checks"]:
         lines.append(f"Required checks failed: {', '.join(result['failed_required_checks'])}")
     return "\n".join(lines)
@@ -69,10 +123,12 @@ def main(argv=None):
     parser.add_argument("--output", help="Write the rendered report to this file as well as stdout")
     parser.add_argument("--min-score", type=int, default=80, help="Minimum score required for a zero exit status")
     parser.add_argument("--require-check", action="append", default=[], choices=CHECK_NAMES, help="Require a specific check to pass even when the total score meets --min-score; may be used multiple times")
+    parser.add_argument("--artifact-check", action="store_true", help="Report generated or cache artifacts that are not covered by .gitignore")
+    parser.add_argument("--fail-on-artifacts", action="store_true", help="Return a non-zero status when --artifact-check finds generated artifacts")
     args = parser.parse_args(argv)
     if not 0 <= args.min_score <= 100:
         parser.error("--min-score must be between 0 and 100")
-    result = score(args.path)
+    result = score(args.path, include_artifact_check=args.artifact_check or args.fail_on_artifacts)
     failed_required = [check["check"] for check in result["checks"] if check["check"] in args.require_check and not check["passed"]]
     result["required_checks"] = args.require_check
     result["failed_required_checks"] = failed_required
@@ -82,6 +138,8 @@ def main(argv=None):
         Path(args.output).write_text(output + "\n", encoding="utf-8")
     if failed_required:
         return 3
+    if args.fail_on_artifacts and not result.get("artifact_check_passed", True):
+        return 4
     return 0 if result["score"] >= args.min_score else 2
 
 if __name__ == "__main__":
