@@ -15,7 +15,7 @@ class CliExampleTest(unittest.TestCase):
         err = proc.stderr
         self.assertEqual(err, "")
         self.assertEqual(code, 0)
-        self.assertIn("Score: 100/100", out)
+        self.assertIn("Score: 100/100 (100%, ready)", out)
 
     def test_json_includes_recommendations_for_missing_checks(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -39,6 +39,7 @@ class CliExampleTest(unittest.TestCase):
         self.assertEqual(proc.stderr, "")
         self.assertEqual(proc.returncode, 0)
         self.assertIn("Score: 0/100", proc.stdout)
+        self.assertIn("0%, not-ready", proc.stdout)
 
     def test_min_score_rejects_out_of_range_values(self):
         proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', 'examples/sample-repo', '--min-score', '101'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
@@ -70,7 +71,7 @@ class CliExampleTest(unittest.TestCase):
         self.assertEqual(proc.stderr, "")
         self.assertEqual(proc.returncode, 0)
         self.assertIn("## Release Readiness Score", proc.stdout)
-        self.assertIn("**Score:** 100/100 (ready)", proc.stdout)
+        self.assertIn("**Score:** 100/100 (100%, ready)", proc.stdout)
         self.assertIn("| Check | Result | Points | Recommendation |", proc.stdout)
         self.assertIn("| README.md | pass | 20/20 |  |", proc.stdout)
 
@@ -83,6 +84,7 @@ class CliExampleTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 0)
             self.assertEqual(output_path.read_text(encoding="utf-8"), proc.stdout)
             self.assertIn("## Release Readiness Score", output_path.read_text(encoding="utf-8"))
+
 
     def test_artifact_check_reports_unignored_cache_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -123,6 +125,32 @@ class CliExampleTest(unittest.TestCase):
         payload = json.loads(proc.stdout)
         self.assertTrue(payload["artifact_check_passed"])
         self.assertEqual(payload["artifact_findings"], [])
+
+    def test_ignore_check_excludes_not_applicable_artifact_from_score(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "README.md").write_text("release " * 100, encoding="utf-8")
+            Path(temp_dir, "LICENSE").write_text("MIT", encoding="utf-8")
+            Path(temp_dir, ".gitignore").write_text("__pycache__/", encoding="utf-8")
+            Path(temp_dir, "tests").mkdir()
+            Path(temp_dir, "README.zh-CN.md").write_text("说明", encoding="utf-8")
+            Path(temp_dir, "pyproject.toml").write_text("[project]\nname='demo'", encoding="utf-8")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--ignore-check', 'examples', '--json'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 0)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["score"], 85)
+        self.assertEqual(payload["max_score"], 85)
+        self.assertEqual(payload["score_percent"], 100)
+        self.assertEqual(payload["ignored_checks"], ["examples"])
+
+    def test_required_check_ignored_is_not_failed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--min-score', '0', '--require-check', 'examples', '--ignore-check', 'examples'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("Ignored checks: examples", proc.stdout)
 
 if __name__ == "__main__":
     unittest.main()

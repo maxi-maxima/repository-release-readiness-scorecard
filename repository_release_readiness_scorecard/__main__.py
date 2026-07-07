@@ -12,6 +12,7 @@ CHECKS = [
 ]
 CHECK_NAMES = [name for name, _, _ in CHECKS]
 
+
 def load_ignore_patterns(root):
     gitignore = Path(root) / ".gitignore"
     if not gitignore.exists():
@@ -23,6 +24,7 @@ def load_ignore_patterns(root):
             patterns.append(line.rstrip("/"))
     return patterns
 
+
 def is_ignored(relative_path, patterns):
     normalized = relative_path.as_posix()
     parts = relative_path.parts
@@ -33,6 +35,7 @@ def is_ignored(relative_path, patterns):
         if cleaned in parts:
             return True
     return False
+
 
 def inventory_untracked_artifacts(root):
     root = Path(root)
@@ -52,11 +55,17 @@ def inventory_untracked_artifacts(root):
             findings.append(rel.as_posix())
     return findings
 
-def score(root, *, include_artifact_check=False):
+
+def score(root, *, ignored_checks=(), include_artifact_check=False):
     root = Path(root)
+    ignored_checks = set(ignored_checks)
     checks = []
     total = 0
+    max_score = 0
     for name, points, recommendation in CHECKS:
+        if name in ignored_checks:
+            continue
+        max_score += points
         exists = (root / name).exists()
         if name == "README.md" and exists:
             exists = len((root / name).read_text(encoding="utf-8", errors="ignore")) > 500
@@ -68,19 +77,21 @@ def score(root, *, include_artifact_check=False):
             "recommendation": "" if exists else recommendation,
         })
         total += points if exists else 0
-    grade = "ready" if total >= 80 else "needs-work" if total >= 50 else "not-ready"
-    result = {"score": total, "grade": grade, "checks": checks}
+    score_percent = round((total / max_score) * 100) if max_score else 0
+    grade = "ready" if score_percent >= 80 else "needs-work" if score_percent >= 50 else "not-ready"
+    result = {"score": total, "max_score": max_score, "score_percent": score_percent, "grade": grade, "checks": checks, "ignored_checks": sorted(ignored_checks)}
     if include_artifact_check:
         artifacts = inventory_untracked_artifacts(root)
         result["artifact_findings"] = artifacts
         result["artifact_check_passed"] = not artifacts
     return result
 
+
 def format_markdown(result):
     lines = [
         "## Release Readiness Score",
         "",
-        f"**Score:** {result['score']}/100 ({result['grade']})",
+        f"**Score:** {result['score']}/{result.get('max_score', 100)} ({result['score_percent']}%, {result['grade']})",
         "",
         "| Check | Result | Points | Recommendation |",
         "| --- | --- | --- | --- |",
@@ -92,16 +103,19 @@ def format_markdown(result):
         artifact_result = "pass" if result["artifact_check_passed"] else "fail"
         recommendation = "" if result["artifact_check_passed"] else "Ignore or remove generated artifacts before release."
         lines.append(f"| generated artifacts | {artifact_result} | 0/0 | {recommendation} |")
+    if result.get("ignored_checks"):
+        lines.extend(["", f"Ignored checks: {', '.join(result['ignored_checks'])}"])
     if result["failed_required_checks"]:
         lines.extend(["", f"Required checks failed: {', '.join(result['failed_required_checks'])}"])
     return "\n".join(lines)
+
 
 def render_output(result, *, as_json=False, as_markdown=False):
     if as_json:
         return json.dumps(result, indent=2)
     if as_markdown:
         return format_markdown(result)
-    lines = [f"Score: {result['score']}/100 ({result['grade']})"]
+    lines = [f"Score: {result['score']}/{result.get('max_score', 100)} ({result['score_percent']}%, {result['grade']})"]
     for check in result["checks"]:
         mark = "✓" if check["passed"] else "✗"
         lines.append(f"{mark} {check['check']} {check['points']}/{check['max_points']}")
@@ -110,9 +124,12 @@ def render_output(result, *, as_json=False, as_markdown=False):
         lines.append(f"{mark} generated artifacts {len(result['artifact_findings'])} finding(s)")
         for artifact in result["artifact_findings"][:5]:
             lines.append(f"  - {artifact}")
+    if result.get("ignored_checks"):
+        lines.append(f"Ignored checks: {', '.join(result['ignored_checks'])}")
     if result["failed_required_checks"]:
         lines.append(f"Required checks failed: {', '.join(result['failed_required_checks'])}")
     return "\n".join(lines)
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Score repository release readiness")
@@ -123,14 +140,17 @@ def main(argv=None):
     parser.add_argument("--output", help="Write the rendered report to this file as well as stdout")
     parser.add_argument("--min-score", type=int, default=80, help="Minimum score required for a zero exit status")
     parser.add_argument("--require-check", action="append", default=[], choices=CHECK_NAMES, help="Require a specific check to pass even when the total score meets --min-score; may be used multiple times")
+    parser.add_argument("--ignore-check", action="append", default=[], choices=CHECK_NAMES, help="Exclude a check from scoring for repositories where that artifact is intentionally not applicable; may be used multiple times")
     parser.add_argument("--artifact-check", action="store_true", help="Report generated or cache artifacts that are not covered by .gitignore")
     parser.add_argument("--fail-on-artifacts", action="store_true", help="Return a non-zero status when --artifact-check finds generated artifacts")
     args = parser.parse_args(argv)
     if not 0 <= args.min_score <= 100:
         parser.error("--min-score must be between 0 and 100")
-    result = score(args.path, include_artifact_check=args.artifact_check or args.fail_on_artifacts)
-    failed_required = [check["check"] for check in result["checks"] if check["check"] in args.require_check and not check["passed"]]
-    result["required_checks"] = args.require_check
+    ignored = set(args.ignore_check)
+    required = [name for name in args.require_check if name not in ignored]
+    result = score(args.path, ignored_checks=ignored, include_artifact_check=args.artifact_check or args.fail_on_artifacts)
+    failed_required = [check["check"] for check in result["checks"] if check["check"] in required and not check["passed"]]
+    result["required_checks"] = required
     result["failed_required_checks"] = failed_required
     output = render_output(result, as_json=args.json, as_markdown=args.markdown)
     print(output)
@@ -140,7 +160,8 @@ def main(argv=None):
         return 3
     if args.fail_on_artifacts and not result.get("artifact_check_passed", True):
         return 4
-    return 0 if result["score"] >= args.min_score else 2
+    return 0 if result["score_percent"] >= args.min_score else 2
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
