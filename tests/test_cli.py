@@ -152,5 +152,31 @@ class CliExampleTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("Ignored checks: examples", proc.stdout)
 
+    def test_sarif_output_reports_failed_checks_for_code_scanning(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "README.md").write_text("short", encoding="utf-8")
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--sarif'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 2)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["version"], "2.1.0")
+        run = payload["runs"][0]
+        self.assertEqual(run["tool"]["driver"]["name"], "repository-release-readiness-scorecard")
+        self.assertEqual(run["properties"]["grade"], "not-ready")
+        rule_ids = {result["ruleId"] for result in run["results"]}
+        self.assertIn("release-readiness/README.md", rule_ids)
+        self.assertIn("release-readiness/LICENSE", rule_ids)
+
+    def test_sarif_marks_required_check_failures_as_errors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = subprocess.run(['python', '-m', 'repository_release_readiness_scorecard', temp_dir, '--min-score', '0', '--require-check', 'LICENSE', '--sarif'], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(proc.returncode, 3)
+        payload = json.loads(proc.stdout)
+        license_result = next(result for result in payload["runs"][0]["results"] if result["ruleId"] == "release-readiness/LICENSE")
+        self.assertEqual(license_result["level"], "error")
+
 if __name__ == "__main__":
     unittest.main()

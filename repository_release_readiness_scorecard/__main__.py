@@ -1,4 +1,5 @@
 import argparse, fnmatch, json
+from urllib.parse import quote
 from pathlib import Path
 
 CHECKS = [
@@ -110,9 +111,79 @@ def format_markdown(result):
     return "\n".join(lines)
 
 
-def render_output(result, *, as_json=False, as_markdown=False):
+def format_sarif(result, root):
+    root_uri = Path(root).resolve().as_uri() + "/"
+    rules = []
+    results = []
+    for check in result["checks"]:
+        rule_id = f"release-readiness/{check['check']}"
+        rules.append({
+            "id": rule_id,
+            "name": check["check"],
+            "shortDescription": {"text": f"{check['check']} release-readiness check"},
+            "help": {"text": check["recommendation"] or "Release-readiness check passed."},
+            "properties": {"max_points": check["max_points"]},
+        })
+        if not check["passed"]:
+            results.append({
+                "ruleId": rule_id,
+                "level": "error" if check["check"] in result.get("required_checks", []) else "warning",
+                "message": {"text": check["recommendation"]},
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": quote(check["check"]), "uriBaseId": "REPO_ROOT"}
+                    }
+                }],
+                "properties": {"points": check["points"], "max_points": check["max_points"]},
+            })
+    if "artifact_findings" in result:
+        rule_id = "release-readiness/generated-artifacts"
+        rules.append({
+            "id": rule_id,
+            "name": "generated artifacts",
+            "shortDescription": {"text": "Generated artifacts should be ignored or removed before release"},
+            "help": {"text": "Ignore or remove generated artifacts before release."},
+        })
+        for artifact in result["artifact_findings"]:
+            results.append({
+                "ruleId": rule_id,
+                "level": "error",
+                "message": {"text": "Generated artifact is not covered by .gitignore."},
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": quote(artifact), "uriBaseId": "REPO_ROOT"}
+                    }
+                }],
+            })
+    payload = {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "repository-release-readiness-scorecard",
+                    "informationUri": "https://github.com/maxi-maxima/repository-release-readiness-scorecard",
+                    "rules": rules,
+                }
+            },
+            "originalUriBaseIds": {"REPO_ROOT": {"uri": root_uri}},
+            "properties": {
+                "score": result["score"],
+                "max_score": result["max_score"],
+                "score_percent": result["score_percent"],
+                "grade": result["grade"],
+            },
+            "results": results,
+        }],
+    }
+    return json.dumps(payload, indent=2)
+
+
+def render_output(result, *, as_json=False, as_markdown=False, as_sarif=False, root='.'):
     if as_json:
         return json.dumps(result, indent=2)
+    if as_sarif:
+        return format_sarif(result, root)
     if as_markdown:
         return format_markdown(result)
     lines = [f"Score: {result['score']}/{result.get('max_score', 100)} ({result['score_percent']}%, {result['grade']})"]
@@ -137,6 +208,7 @@ def main(argv=None):
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument("--json", action="store_true")
     output_group.add_argument("--markdown", action="store_true", help="Print a Markdown summary suitable for PR comments or issue reports")
+    output_group.add_argument("--sarif", action="store_true", help="Print a SARIF 2.1.0 report suitable for GitHub code scanning uploads")
     parser.add_argument("--output", help="Write the rendered report to this file as well as stdout")
     parser.add_argument("--min-score", type=int, default=80, help="Minimum score required for a zero exit status")
     parser.add_argument("--require-check", action="append", default=[], choices=CHECK_NAMES, help="Require a specific check to pass even when the total score meets --min-score; may be used multiple times")
@@ -152,7 +224,7 @@ def main(argv=None):
     failed_required = [check["check"] for check in result["checks"] if check["check"] in required and not check["passed"]]
     result["required_checks"] = required
     result["failed_required_checks"] = failed_required
-    output = render_output(result, as_json=args.json, as_markdown=args.markdown)
+    output = render_output(result, as_json=args.json, as_markdown=args.markdown, as_sarif=args.sarif, root=args.path)
     print(output)
     if args.output:
         Path(args.output).write_text(output + "\n", encoding="utf-8")
